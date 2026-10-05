@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0c0c09"><meta name="description" content="Простой блокнот: вставьте текст и сохраните в TXT. Работает на устройстве.">
+<link rel="manifest" href="./manifest.webmanifest"><link rel="apple-touch-icon" href="./icon-192.png">
+<title>Карманный блокнот — версия 2.3</title>
+<style>
+:root{color-scheme:light;--ink:#0c0c09;--muted:#62625b;--paper:#fff;--line:#d5d5cf;--accent:#0c0c09}*{box-sizing:border-box}body{margin:0;background:#f4f4f1;color:var(--ink);font:16px system-ui,-apple-system,sans-serif}main{max-width:820px;margin:auto;padding:24px 16px calc(24px + env(safe-area-inset-bottom))}header{display:flex;align-items:center;gap:12px;margin-bottom:24px}.mark{background:var(--accent);color:white;border-radius:0;font-size:28px;width:52px;height:52px;display:grid;place-items:center}h1{font-size:25px;letter-spacing:-.7px;margin:0}header p{margin:4px 0 0;color:var(--muted);font-size:14px}.card{background:var(--paper);border:1px solid var(--line);border-radius:0;padding:18px;box-shadow:none}label{display:block;font-weight:600;font-size:14px;margin:0 0 8px}input{width:100%;border:1px solid var(--line);border-radius:0;padding:13px;background:white;color:var(--ink);font:inherit}textarea{display:block;width:100%;min-height:48vh;resize:vertical;border:1px solid var(--line);border-radius:0;background:white;color:var(--ink);font:17px/1.7 system-ui;outline:none;padding:13px;margin:0 0 16px;white-space:pre-wrap;overflow-wrap:anywhere}textarea::placeholder{color:#72726a}input:focus-visible,button:focus-visible,textarea:focus-visible{outline:3px solid #77776c;outline-offset:3px}.meta{padding-top:12px;border-top:1px solid var(--line);color:var(--muted);font-size:13px;display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap}.actions{display:flex;gap:10px;margin:16px 0 0}button{min-height:50px;border:1px solid var(--line);border-radius:0;padding:12px 18px;font:600 16px system-ui;cursor:pointer;background:var(--paper);color:var(--ink)}button.primary{flex:1;background:var(--accent);color:white;border-color:var(--accent)}button:disabled{opacity:.55;cursor:wait}.note{color:var(--muted);font-size:13px;line-height:1.6;margin:16px 3px 0}#message{min-height:24px;margin-top:12px;font-size:14px;line-height:1.5}#install{width:100%;margin-top:12px} [hidden]{display:none!important}@media(max-width:400px){h1{font-size:23px}.card{padding:14px}main{padding-top:18px}.actions button{padding:12px 14px}}@media(prefers-color-scheme:dark){:root{color-scheme:dark;--ink:#f4f4f1;--muted:#b2b2a9;--paper:#1c1c19;--line:#494943;--accent:#363630}body{background:#121210}input{background:#242421}textarea{color:var(--ink);background:#242421}}
+</style>
+</head>
+<body><main>
+<header><div class="mark" aria-hidden="true">≡</div><div><h1>Карманный блокнот</h1><p style="font-weight:700;color:var(--ink)">Версия 2.3</p></div></header>
+<section class="card" aria-label="Редактор">
+<label for="filename">Название файла</label><input id="filename" disabled value="Моя заметка" autocomplete="off" enterkeyhint="next" aria-describedby="extension">
+<span id="extension" class="note">Расширение .txt добавится автоматически</span>
+<label for="editor" style="margin-top:20px">Текст</label>
+<textarea id="editor" aria-label="Текст заметки" placeholder="Вставь сюда заметку, рассказ или целую книгу…" spellcheck="false" autocapitalize="off" autocomplete="off" disabled></textarea>
+<div class="meta"><span id="count">0 символов</span><span id="draft" role="status">Загрузка черновика…</span></div>
+</section>
+<div class="actions"><button class="primary" id="save" disabled>Сохранить .txt ↓</button><button id="clear" disabled>Очистить</button></div>
+<button id="install" hidden>Установить на телефон</button>
+<div id="message" role="status" aria-live="polite"></div>
+<p class="note">Текст остаётся на этом устройстве. Черновик сохраняется автоматически, но важное лучше скачать в TXT. Разделители абзацев из читалок автоматически превращаются в обычные переносы. Ограничения по длине в блокноте нет — доступный объём зависит от памяти телефона.</p>
+<details class="note"><summary>Как установить и найти файл</summary><p>На Android открой сайт в Chrome и выбери в меню «Установить приложение» или «Добавить на главный экран». На iPhone: Safari → «Поделиться» → «На экран Домой». После «Сохранить» ищи TXT в загрузках браузера или папке Download. Офлайн-режим доступен после первого открытия сайта; установка из локального HTML недоступна.</p></details>
+</main>
+<script>
+'use strict';
+const editor=document.getElementById('editor'),filename=document.getElementById('filename'),draft=document.getElementById('draft'),count=document.getElementById('count'),message=document.getElementById('message'),save=document.getElementById('save'),clear=document.getElementById('clear');
+let db=null,timer,revision=0,dirty=false,installPrompt;
+function tell(s){message.textContent=s;}
+function updateCount(){count.textContent=editor.value.length.toLocaleString('ru-RU')+' символов';}
+function cleanName(s){return (s.trim().replace(/[\u0000-\u001f\u007f/\\:*?"<>|]/g,'_').replace(/\.txt$/i,'').slice(0,100).replace(/[. ]+$/g,'')||'Заметка')+'.txt';}
+function writeDraft(){
+ clearTimeout(timer);if(!dirty||!db)return;
+ const snapshot={text:editor.value,name:filename.value},r=revision;
+ try{const tx=db.transaction('draft','readwrite');tx.objectStore('draft').put(snapshot,'current');tx.oncomplete=()=>{if(r===revision){dirty=false;draft.textContent='Черновик сохранён';}};tx.onabort=tx.onerror=()=>{draft.textContent='Черновик не сохранён — скачай TXT';};}catch{draft.textContent='Черновик не сохранён — скачай TXT';}
+}
+function normalizeBreaks(text){return text.replace(/\u2029/g,'\n\n').replace(/[\u2028\u0085]/g,'\n');}
+function fixBreaks(){
+ const original=editor.value,normalized=normalizeBreaks(original);
+ if(normalized===original)return false;
+ const start=editor.selectionStart,end=editor.selectionEnd,direction=editor.selectionDirection,top=editor.scrollTop;
+ editor.value=normalized;
+ if(typeof start==='number'&&typeof editor.setSelectionRange==='function')editor.setSelectionRange(normalizeBreaks(original.slice(0,start)).length,normalizeBreaks(original.slice(0,end)).length,direction);
+ editor.scrollTop=top;return true;
+}
+function changed(){if(fixBreaks())tell('Разделители заменены на обычные абзацы.');dirty=true;revision++;updateCount();draft.textContent=db?'Сохраняю черновик…':'Черновик недоступен — скачай TXT';clearTimeout(timer);timer=setTimeout(writeDraft,400);}
+editor.addEventListener('input',changed);filename.addEventListener('input',changed);
+async function init(){
+ try{db=await new Promise((resolve,reject)=>{const req=indexedDB.open('pocket-notepad',1);req.onupgradeneeded=()=>req.result.createObjectStore('draft');req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error);req.onblocked=()=>reject(new Error('blocked'));});
+ const data=await new Promise((resolve,reject)=>{const req=db.transaction('draft','readonly').objectStore('draft').get('current');req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error);});
+ if(data){editor.value=data.text;filename.value=data.name;draft.textContent='Черновик восстановлен';}else draft.textContent='Черновик готов';
+ db.onversionchange=()=>{db.close();db=null;draft.textContent='Перезагрузи страницу для автосохранения';};
+ }catch{db=null;draft.textContent='Черновик недоступен — скачай TXT';}
+ editor.disabled=false;filename.disabled=false;save.disabled=false;clear.disabled=false;updateCount();if(fixBreaks()){changed();writeDraft();tell('Абзацы в старом черновике исправлены.');}
+}
+save.addEventListener('click',()=>{
+ try{const blob=new Blob([normalizeBreaks(editor.value)],{type:'text/plain;charset=utf-8'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=cleanName(filename.value);document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);writeDraft();tell('Скачивание TXT начато. Проверь загрузки браузера.');}catch{tell('Не удалось создать файл. Попробуй снова или освободи память устройства.');}
+});
+clear.addEventListener('click',()=>{if(editor.value&&!confirm('Очистить текст? Сначала сохрани важное в TXT.'))return;editor.value='';changed();writeDraft();tell('Текст очищен.');editor.focus();});
+document.addEventListener('visibilitychange',()=>{if(document.hidden)writeDraft();});window.addEventListener('pagehide',writeDraft);window.addEventListener('beforeunload',e=>{if(dirty){writeDraft();e.preventDefault();e.returnValue='';}});
+const install=document.getElementById('install');window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();installPrompt=e;install.hidden=false;});install.addEventListener('click',async()=>{if(!installPrompt)return;try{await installPrompt.prompt();await installPrompt.userChoice;}catch{tell('Установи блокнот через меню браузера.');}installPrompt=null;install.hidden=true;});window.addEventListener('appinstalled',()=>{install.hidden=true;});
+if('serviceWorker'in navigator&&/^https?:$/.test(location.protocol)){navigator.serviceWorker.register('./sw.js').catch(()=>tell('Офлайн-режим недоступен. Сохранение TXT работает.'));}
+init();
+</script></body></html>

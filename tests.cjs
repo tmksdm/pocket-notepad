@@ -1,0 +1,34 @@
+const {chromium}=require('playwright');
+const assert=require('node:assert/strict');
+const fs=require('node:fs/promises');
+(async()=>{
+ const browser=await chromium.launch({headless:true});
+ const context=await browser.newContext({viewport:{width:360,height:800},acceptDownloads:true});
+ const page=await context.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));
+ await page.goto('http://localhost:8765');await page.locator('#editor').waitFor();await page.waitForFunction(()=>!document.querySelector('#editor').disabled);
+ assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+ const text='Книга «Тест»\nЁж, 😀, café.\n\n  пробелы\tи табуляция\n<script>alert(1)</script>';
+ await page.locator('#editor').fill(text);await page.locator('#filename').fill('Моя книга.txt');
+ await page.waitForFunction(()=>document.querySelector('#draft').textContent==='Черновик сохранён');
+ let downloaded=page.waitForEvent('download');await page.locator('#save').click();let download=await downloaded;
+ assert.equal(download.suggestedFilename(),'Моя книга.txt');assert.equal(await fs.readFile(await download.path(),'utf8'),text);
+ await page.reload();await page.waitForFunction(()=>!document.querySelector('#editor').disabled);assert.equal(await page.locator('#editor').inputValue(),text);
+ const big='Текст книги 😀\n'.repeat(600000); // 10+ MiB UTF-8
+ const start=Date.now();await page.evaluate(t=>{const el=document.querySelector('#editor');el.value=t;el.dispatchEvent(new Event('input'));},big);
+ downloaded=page.waitForEvent('download');await page.locator('#save').click();download=await downloaded;assert.equal(await fs.readFile(await download.path(),'utf8'),big);
+ await page.waitForFunction(()=>document.querySelector('#draft').textContent==='Черновик сохранён');
+ await page.reload();await page.waitForFunction(()=>!document.querySelector('#editor').disabled);assert.equal(await page.locator('#editor').inputValue(),big);
+ console.log('PASS large text:',Buffer.byteLength(big),'bytes,',Date.now()-start,'ms (desktop Chromium)');
+ await page.evaluate(()=>navigator.serviceWorker.ready);await page.waitForFunction(()=>!!navigator.serviceWorker.controller);
+ await context.setOffline(true);await page.reload();await page.waitForFunction(()=>!document.querySelector('#editor').disabled);assert.equal(await page.locator('#editor').inputValue(),big);
+ console.log('PASS offline reload and draft recovery');
+ page.once('dialog',d=>d.dismiss());await page.locator('#clear').click();assert.equal(await page.locator('#editor').inputValue(),big);
+ page.once('dialog',d=>d.accept());await page.locator('#clear').click();assert.equal(await page.locator('#editor').inputValue(),'');
+ await page.waitForFunction(()=>document.querySelector('#draft').textContent==='Черновик сохранён');
+ await page.screenshot({path:'../notepad-mobile.png',fullPage:true});
+ await context.setOffline(false);
+ const denied=await browser.newContext();await denied.addInitScript(()=>{Object.defineProperty(window,'indexedDB',{get(){throw new Error('blocked');}})});
+ const dp=await denied.newPage();await dp.goto('http://localhost:8765');await dp.waitForFunction(()=>!document.querySelector('#editor').disabled);assert.match(await dp.locator('#draft').textContent(),/недоступен/);await dp.locator('#editor').fill('Скачать можно');
+ downloaded=dp.waitForEvent('download');await dp.locator('#save').click();download=await downloaded;assert.equal(await fs.readFile(await download.path(),'utf8'),'Скачать можно');
+ assert.deepEqual(errors,[]);console.log('PASS UTF-8 export, mobile overflow, persistence, clear confirmation, denied storage, no JS errors');await browser.close();
+})().catch(e=>{console.error(e);process.exit(1)});
